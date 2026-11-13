@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- The component's tables are `polarSubscriptions` and `polarProducts`. As
+  `subscriptions` and `products` they shared names with `@convex-dev/polar`'s
+  tables, so an app replacing it (mounted under the same name) failed to
+  deploy: Convex checked the old rows against the new shapes. The API is
+  unchanged; data mirrored by 0.1 or 0.2 is filled again by `syncProducts`
+  and `syncSubscriptions`.
+
 ## 0.2.0
 
 - Subscriptions are looked up by `referenceId` (what they're for), which

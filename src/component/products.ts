@@ -6,7 +6,7 @@ import { type Product, vProduct } from "./validators.js";
 // An organization sells a few dozen products at most; this only bounds the read.
 const MAX_PRODUCTS = 500;
 
-function withoutSystemFields({ _id, _creationTime, ...product }: Doc<"products">): Product {
+function withoutSystemFields({ _id, _creationTime, ...product }: Doc<"polarProducts">): Product {
   return product;
 }
 
@@ -22,7 +22,7 @@ export const list = query({
   args: { includeArchived: v.optional(v.boolean()) },
   returns: v.array(vProduct),
   handler: async (ctx, { includeArchived }) => {
-    const rows = await ctx.db.query("products").take(MAX_PRODUCTS);
+    const rows = await ctx.db.query("polarProducts").take(MAX_PRODUCTS);
     return rows.filter((row) => includeArchived || !row.isArchived).map(withoutSystemFields);
   }
 });
@@ -39,7 +39,7 @@ export const upsert = mutation({
 
 export async function getProduct(ctx: QueryCtx, id: string): Promise<Product | null> {
   const row = await ctx.db
-    .query("products")
+    .query("polarProducts")
     .withIndex("by_polarId", (q) => q.eq("id", id))
     .unique();
   return row ? withoutSystemFields(row) : null;
@@ -47,13 +47,13 @@ export async function getProduct(ctx: QueryCtx, id: string): Promise<Product | n
 
 export async function upsertProduct(ctx: MutationCtx, product: Product): Promise<void> {
   const existing = await ctx.db
-    .query("products")
+    .query("polarProducts")
     .withIndex("by_polarId", (q) => q.eq("id", product.id))
     .unique();
   if (!existing) {
-    await ctx.db.insert("products", product);
+    await ctx.db.insert("polarProducts", product);
   } else if (changedAt(existing) <= changedAt(product)) {
-    await ctx.db.replace("products", existing._id, product);
+    await ctx.db.replace("polarProducts", existing._id, product);
   }
 }
 

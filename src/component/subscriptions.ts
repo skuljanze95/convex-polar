@@ -6,7 +6,7 @@ import { type Subscription, vSubscription } from "./validators.js";
 // A reference has a handful of subscriptions at most; this only bounds the read.
 const MAX_PER_REFERENCE = 100;
 
-function withoutSystemFields({ _id, _creationTime, ...subscription }: Doc<"subscriptions">): Subscription {
+function withoutSystemFields({ _id, _creationTime, ...subscription }: Doc<"polarSubscriptions">): Subscription {
   return subscription;
 }
 
@@ -23,7 +23,7 @@ export const listByReference = query({
   returns: v.array(vSubscription),
   handler: async (ctx, { referenceId }) => {
     const rows = await ctx.db
-      .query("subscriptions")
+      .query("polarSubscriptions")
       .withIndex("by_referenceId", (q) => q.eq("referenceId", referenceId))
       .order("desc")
       .take(MAX_PER_REFERENCE);
@@ -46,7 +46,7 @@ export const upsert = mutation({
 
 export async function getSubscription(ctx: QueryCtx, id: string): Promise<Subscription | null> {
   const row = await ctx.db
-    .query("subscriptions")
+    .query("polarSubscriptions")
     .withIndex("by_polarId", (q) => q.eq("id", id))
     .unique();
   return row ? withoutSystemFields(row) : null;
@@ -54,13 +54,13 @@ export async function getSubscription(ctx: QueryCtx, id: string): Promise<Subscr
 
 export async function upsertSubscription(ctx: MutationCtx, subscription: Subscription): Promise<void> {
   const existing = await ctx.db
-    .query("subscriptions")
+    .query("polarSubscriptions")
     .withIndex("by_polarId", (q) => q.eq("id", subscription.id))
     .unique();
   if (!existing) {
-    await ctx.db.insert("subscriptions", subscription);
+    await ctx.db.insert("polarSubscriptions", subscription);
   } else if (changedAt(existing) <= changedAt(subscription)) {
-    await ctx.db.replace("subscriptions", existing._id, subscription);
+    await ctx.db.replace("polarSubscriptions", existing._id, subscription);
   }
 }
 
