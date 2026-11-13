@@ -1,9 +1,8 @@
 import {
   createFunctionHandle,
   type FunctionReference,
+  type GenericActionCtx,
   type GenericDataModel,
-  type GenericMutationCtx,
-  type GenericQueryCtx,
   type HttpRouter,
   httpActionGeneric
 } from "convex/server";
@@ -84,8 +83,10 @@ export type CheckoutOptions = {
 
 export type ProrationBehavior = "invoice" | "prorate" | "next_period" | "reset";
 
-type QueryCtx = Pick<GenericQueryCtx<GenericDataModel>, "runQuery">;
-type MutationCtx = Pick<GenericMutationCtx<GenericDataModel>, "runQuery" | "runMutation">;
+// The narrowest signatures (an action's), which query, mutation and action
+// contexts all satisfy.
+type QueryCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery">;
+type MutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
 
 /**
  * Polar subscriptions for a Convex app: checkout, the customer portal, plan

@@ -22,7 +22,7 @@
     "build:codegen": "mkdir -p convex && convex codegen --component-dir ./src/component; status=$?; rmdir convex; [ $status -eq 0 ] && pnpm build",
     "clean": "rm -rf dist *.tsbuildinfo",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --typecheck",
+    "test": "vitest run && tsc --noEmit",
     "prepublishOnly": "pnpm clean && pnpm build && pnpm test"
   },
   "files": [
