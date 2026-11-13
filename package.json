@@ -3,7 +3,10 @@
   "description": "Polar subscriptions for Convex: checkout, customer portal, plan changes and a webhook-fed subscription mirror, pinned to one Polar API version.",
   "version": "0.1.0",
   "license": "MIT",
-  "repository": "github:skuljanze95/convex-polar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skuljanze95/convex-polar.git"
+  },
   "homepage": "https://github.com/skuljanze95/convex-polar#readme",
   "bugs": {
     "url": "https://github.com/skuljanze95/convex-polar/issues"
