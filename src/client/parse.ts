@@ -1,0 +1,113 @@
+import type {
+  Metadata,
+  RecurringInterval,
+  Subscription,
+  SubscriptionStatus
+} from "../component/validators.js";
+
+// Reads Polar's JSON (API version 2026-10) into the shapes the component
+// stores. Only the fields the mirror keeps are read, and each is checked, so a
+// change on Polar's side fails here with the field's name instead of later.
+
+const STATUSES: readonly SubscriptionStatus[] = [
+  "incomplete",
+  "incomplete_expired",
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "unpaid",
+  "paused"
+];
+const INTERVALS: readonly RecurringInterval[] = ["day", "week", "month", "year"];
+
+/** Polar sent something this version of the package doesn't understand. */
+export class PolarParseError extends Error {
+  override name = "PolarParseError";
+}
+
+/** A Polar `Subscription` object, as the component mirrors it. */
+export function parseSubscription(value: unknown): Subscription {
+  const data = object(value, "subscription");
+  const customer = object(data.customer, "subscription.customer");
+  return {
+    id: string(data, "id"),
+    customerId: string(data, "customer_id"),
+    externalCustomerId: nullable(customer, "external_id", string),
+    productId: string(data, "product_id"),
+    status: oneOf(data, "status", STATUSES),
+    amount: number(data, "amount"),
+    currency: string(data, "currency"),
+    recurringInterval: oneOf(data, "recurring_interval", INTERVALS),
+    recurringIntervalCount: number(data, "recurring_interval_count"),
+    currentPeriodStart: time(data, "current_period_start"),
+    currentPeriodEnd: time(data, "current_period_end"),
+    trialStart: nullable(data, "trial_start", time),
+    trialEnd: nullable(data, "trial_end", time),
+    cancelAtPeriodEnd: boolean(data, "cancel_at_period_end"),
+    canceledAt: nullable(data, "canceled_at", time),
+    startedAt: nullable(data, "started_at", time),
+    endsAt: nullable(data, "ends_at", time),
+    endedAt: nullable(data, "ended_at", time),
+    metadata: metadata(data.metadata),
+    createdAt: time(data, "created_at"),
+    modifiedAt: nullable(data, "modified_at", time)
+  };
+}
+
+type Json = Record<string, unknown>;
+
+function object(value: unknown, what: string): Json {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PolarParseError(`Expected ${what} to be an object`);
+  }
+  return value as Json;
+}
+
+function string(data: Json, key: string): string {
+  const value = data[key];
+  if (typeof value !== "string") throw new PolarParseError(`Expected ${key} to be a string`);
+  return value;
+}
+
+function number(data: Json, key: string): number {
+  const value = data[key];
+  if (typeof value !== "number") throw new PolarParseError(`Expected ${key} to be a number`);
+  return value;
+}
+
+function boolean(data: Json, key: string): boolean {
+  const value = data[key];
+  if (typeof value !== "boolean") throw new PolarParseError(`Expected ${key} to be a boolean`);
+  return value;
+}
+
+function time(data: Json, key: string): number {
+  const ms = Date.parse(string(data, key));
+  if (Number.isNaN(ms)) throw new PolarParseError(`Expected ${key} to be a date`);
+  return ms;
+}
+
+function oneOf<T extends string>(data: Json, key: string, values: readonly T[]): T {
+  const value = string(data, key);
+  if (!values.includes(value as T)) throw new PolarParseError(`Unexpected ${key} "${value}"`);
+  return value as T;
+}
+
+function nullable<T>(data: Json, key: string, read: (data: Json, key: string) => T): T | null {
+  return data[key] === null || data[key] === undefined ? null : read(data, key);
+}
+
+/**
+ * Polar's metadata, without the entries Convex can't store: keys must be
+ * non-empty ASCII and not start with "$" or "_".
+ */
+function metadata(value: unknown): Metadata {
+  if (value === null || value === undefined) return {};
+  const result: Metadata = {};
+  for (const [key, item] of Object.entries(object(value, "metadata"))) {
+    if (!/^[\x20-\x7e]+$/.test(key) || key.startsWith("$") || key.startsWith("_")) continue;
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") result[key] = item;
+  }
+  return result;
+}

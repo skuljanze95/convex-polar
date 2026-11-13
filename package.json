@@ -1,0 +1,69 @@
+{
+  "name": "@skuljanze/convex-polar",
+  "description": "Polar subscriptions for Convex: checkout, customer portal, plan changes and a webhook-fed subscription mirror, pinned to one Polar API version.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": "github:skuljanze95/convex-polar",
+  "homepage": "https://github.com/skuljanze95/convex-polar#readme",
+  "bugs": {
+    "url": "https://github.com/skuljanze95/convex-polar/issues"
+  },
+  "keywords": [
+    "convex",
+    "component",
+    "polar",
+    "billing",
+    "subscriptions"
+  ],
+  "type": "module",
+  "packageManager": "pnpm@10.34.4",
+  "scripts": {
+    "build": "tsc --project ./tsconfig.build.json",
+    "build:codegen": "mkdir -p convex && convex codegen --component-dir ./src/component; status=$?; rmdir convex; [ $status -eq 0 ] && pnpm build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --typecheck",
+    "prepublishOnly": "pnpm clean && pnpm build && pnpm test"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.*"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./test": "./src/test.ts",
+    "./_generated/component.js": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./_generated/component": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./convex.config.js": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    },
+    "./convex.config": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    }
+  },
+  "types": "./dist/client/index.d.ts",
+  "module": "./dist/client/index.js",
+  "peerDependencies": {
+    "convex": "^1.50.0"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^26.6.6",
+    "convex": "^1.50.0",
+    "convex-test": "^0.0.71",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}
