@@ -1,8 +1,9 @@
 import type { FunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import { type MutationCtx, mutation } from "./_generated/server.js";
-import { upsertSubscription } from "./subscriptions.js";
-import { vSubscription } from "./validators.js";
+import { getProduct, upsertProduct } from "./products.js";
+import { getSubscription, upsertSubscription } from "./subscriptions.js";
+import { vProduct, vSubscription } from "./validators.js";
 
 // Polar retries a failed delivery up to 10 times with exponential backoff;
 // a delivery id is remembered well past the last retry.
@@ -12,21 +13,23 @@ const PRUNE_BATCH = 10;
 
 /**
  * Handles one verified webhook delivery (the client checked its signature):
- * mirrors the subscription it carries, then runs the app's `onEvent` handler,
- * all in one transaction. A delivery seen before changes nothing.
+ * mirrors the subscription or product it carries, then runs the app's
+ * `onEvent` handler, all in one transaction. A delivery seen before changes
+ * nothing.
  */
 export const ingest = mutation({
   args: {
     webhookId: v.string(),
     type: v.string(),
     subscription: v.union(vSubscription, v.null()),
+    product: v.optional(v.union(vProduct, v.null())),
     // The raw event, passed on to `onEvent`; only sent when there is one.
     payload: v.optional(v.string()),
     // A function handle for the app's mutation.
     onEvent: v.optional(v.string())
   },
   returns: v.union(v.literal("processed"), v.literal("duplicate")),
-  handler: async (ctx, { webhookId, type, subscription, payload, onEvent }) => {
+  handler: async (ctx, { webhookId, type, subscription, product, payload, onEvent }) => {
     const seen = await ctx.db
       .query("webhookEvents")
       .withIndex("by_webhookId", (q) => q.eq("webhookId", webhookId))
@@ -36,28 +39,19 @@ export const ingest = mutation({
     await pruneWebhookEvents(ctx);
 
     if (subscription) await upsertSubscription(ctx, subscription);
+    if (product) await upsertProduct(ctx, product);
     if (onEvent) {
-      // The mirrored state, not the event's: an out-of-order event is older.
-      const mirrored = subscription ? await currentState(ctx, subscription.id) : null;
+      // The mirrored states, not the event's: an out-of-order event is older.
       await ctx.runMutation(onEvent as FunctionHandle<"mutation">, {
         type,
         payload: payload ?? "",
-        subscription: mirrored
+        subscription: subscription ? await getSubscription(ctx, subscription.id) : null,
+        product: product ? await getProduct(ctx, product.id) : null
       });
     }
     return "processed";
   }
 });
-
-async function currentState(ctx: MutationCtx, id: string) {
-  const row = await ctx.db
-    .query("subscriptions")
-    .withIndex("by_polarId", (q) => q.eq("id", id))
-    .unique();
-  if (!row) return null;
-  const { _id, _creationTime, ...subscription } = row;
-  return subscription;
-}
 
 async function pruneWebhookEvents(ctx: MutationCtx): Promise<void> {
   const cutoff = Date.now() - WEBHOOK_EVENT_TTL_MS;

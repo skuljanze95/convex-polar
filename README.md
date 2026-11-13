@@ -1,8 +1,9 @@
 # @skuljanze/convex-polar
 
 [Polar](https://polar.sh) subscriptions for [Convex](https://convex.dev):
-checkout, the customer portal, plan changes, and a mirror of every subscription
-that Polar's webhooks keep current, so your queries can read who pays.
+checkout, the customer portal, plan changes, and mirrors of your subscriptions
+and products that Polar's webhooks keep current, so your queries can read who
+pays and what it costs.
 
 - **No Polar SDK.** It calls Polar's REST API with `fetch` and verifies webhooks
   with WebCrypto, so everything runs in Convex's default runtime (no
@@ -11,9 +12,10 @@ that Polar's webhooks keep current, so your queries can read who pays.
   `Polar-Version`, and every field read is checked, so a contract change fails
   loudly with the field's name instead of corrupting the mirror. Moving to a
   newer version is a release of this package.
-- **Customers are your own ids.** Checkouts use Polar's external customer id,
-  so a subscription is found by your user, team or business id. No customer
-  table to keep in sync.
+- **Subscriptions are found by your own ids.** A checkout carries a
+  `referenceId` (your user, team or shop id), Polar copies it onto the
+  subscription, and the mirror is indexed by it. Polar keeps one customer per
+  email, so one person can pay for several of your references.
 - **Webhooks run once.** Deliveries are deduplicated by `webhook-id`, events
   delivered out of order can't roll the mirror back, and your `onEvent` handler
   runs in the same transaction as the mirror update.
@@ -37,9 +39,9 @@ export default app;
 Set the keys on your deployment:
 
 ```sh
-npx convex env set POLAR_ACCESS_TOKEN polar_oat_…   # an organization access token
-npx convex env set POLAR_WEBHOOK_SECRET whsec_…     # the webhook endpoint's secret
-npx convex env set POLAR_SERVER production          # leave unset for sandbox
+npx convex env set POLAR_ORGANIZATION_TOKEN polar_oat_…   # an organization access token
+npx convex env set POLAR_WEBHOOK_SECRET whsec_…           # the webhook endpoint's secret
+npx convex env set POLAR_SERVER production                # leave unset for sandbox
 ```
 
 Create the client once. Its options are read on every call, so getters over
@@ -47,13 +49,13 @@ Create the client once. Its options are read on every call, so getters over
 
 ```ts
 // convex/polar.ts
-import { Polar } from "@skuljanze/convex-polar";
+import { Polar, type PolarServer } from "@skuljanze/convex-polar";
 import { components } from "./_generated/api";
 
 export const polar = new Polar(components.polar, {
-  get accessToken() { return process.env.POLAR_ACCESS_TOKEN; },
+  get accessToken() { return process.env.POLAR_ORGANIZATION_TOKEN; },
   get webhookSecret() { return process.env.POLAR_WEBHOOK_SECRET; },
-  get server() { return process.env.POLAR_SERVER as "sandbox" | "production" | undefined; },
+  get server() { return process.env.POLAR_SERVER as PolarServer | undefined; },
 });
 ```
 
@@ -71,11 +73,22 @@ export default http;
 
 In Polar's dashboard, add a webhook endpoint at
 `https://<your-deployment>.convex.site/polar/events`, format **Raw**, API
-version **2026-10**, with at least the `subscription.*` events.
+version **2026-10**, with the `subscription.*` events (and `product.*` to keep
+the product mirror current). Then fill the mirrors once, from an action:
+
+```ts
+export const syncPolar = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    await polar.syncProducts(ctx);
+    await polar.syncSubscriptions(ctx);
+  },
+});
+```
 
 ## Use
 
-Sell a product. The buyer's id becomes the Polar customer's external id:
+Sell a product. `referenceId` is what the subscription is for:
 
 ```ts
 export const subscribe = action({
@@ -84,7 +97,8 @@ export const subscribe = action({
     const user = await requireUser(ctx); // your auth
     const { url } = await polar.createCheckout({
       products: [productId],
-      externalCustomerId: user.id,
+      referenceId: user.id, // or the team, shop, … being paid for
+      externalCustomerId: user.id, // the person paying, kept on a new Polar customer
       customerEmail: user.email,
       // Polar reads the tax country from the IP that creates the checkout.
       customerIpAddress: (await ctx.meta.getRequestMetadata()).ip ?? undefined,
@@ -98,31 +112,40 @@ export const subscribe = action({
 Read who pays, reactively, in any query or mutation:
 
 ```ts
-const subscriptions = await polar.listSubscriptions(ctx, { externalCustomerId: user.id });
+const subscriptions = await polar.listSubscriptions(ctx, { referenceId: user.id });
 const paying = subscriptions.some((s) => s.status === "active" || s.status === "trialing");
 ```
 
-Change or cancel, from an action. The mirror updates right away, before the
-webhook confirms it:
+Change, cancel or end it, from an action. The mirror updates right away,
+before the webhook confirms it:
 
 ```ts
 await polar.changeProduct(ctx, { subscriptionId, productId: yearly, prorationBehavior: "prorate" });
 await polar.setCancelAtPeriodEnd(ctx, { subscriptionId, cancelAtPeriodEnd: true });
-const portalUrl = await polar.createCustomerPortalUrl({ externalCustomerId: user.id, returnUrl });
+await polar.revokeSubscription(ctx, { subscriptionId }); // ends it now, e.g. on account deletion
+// Polar's portal for the customer who pays it:
+const portalUrl = await polar.createCustomerPortalUrl({ customerId: subscription.customerId, returnUrl });
+```
+
+Read the products and their prices, reactively:
+
+```ts
+const products = await polar.listProducts(ctx); // archived ones with { includeArchived: true }
+const monthly = await polar.getProduct(ctx, { id: monthlyProductId });
 ```
 
 Anything else in Polar's API, with the token and pinned version (Polar's
 snake_case shapes, see the [API reference](https://polar.sh/docs/api-reference)):
 
 ```ts
-const products = await polar.request("GET", "/v1/products/", { query: { is_recurring: true } });
+await polar.request("PATCH", `/v1/products/${id}`, { body: { prices: [price] } });
 ```
 
 ### Reacting to events
 
 Pass a mutation to run for every event, once, in the same transaction as the
-mirror update. It gets the event type, the raw JSON, and the subscription as
-now mirrored (null for events that aren't about a subscription):
+mirror update. It gets the event type, the raw JSON, and the subscription or
+product as now mirrored (null for other events):
 
 ```ts
 // convex/billing.ts
@@ -130,7 +153,7 @@ import { vWebhookEvent } from "@skuljanze/convex-polar";
 
 export const onPolarEvent = internalMutation({
   args: vWebhookEvent,
-  handler: async (ctx, { type, payload, subscription }) => {
+  handler: async (ctx, { type, payload, subscription, product }) => {
     if (type === "subscription.created") { /* send a welcome email */ }
   },
 });
@@ -141,14 +164,15 @@ polar.registerRoutes(http, { onEvent: internal.billing.onPolarEvent });
 
 If it throws, the delivery fails and Polar retries it.
 
-## The subscription mirror
+## The mirrors
 
 `listSubscriptions` and `getSubscription` return:
 
 | Field | |
 | --- | --- |
 | `id`, `customerId`, `productId` | Polar ids |
-| `externalCustomerId` | your id for the customer, or null if it has none |
+| `referenceId` | what it's for: the checkout's `referenceId`, else the customer's external id, else null |
+| `externalCustomerId` | the paying customer's external id, or null |
 | `status` | `incomplete`, `incomplete_expired`, `trialing`, `active`, `past_due`, `canceled`, `unpaid`, `paused` |
 | `amount`, `currency`, `recurringInterval`, `recurringIntervalCount` | the price |
 | `currentPeriodStart`, `currentPeriodEnd` | the period paid for |
@@ -157,7 +181,27 @@ If it throws, the delivery fails and Polar retries it.
 | `metadata` | from the checkout |
 | `createdAt`, `modifiedAt` | when Polar made and last changed it |
 
+`listProducts` and `getProduct` return `id`, `name`, `description`,
+`isRecurring`, `isArchived`, `recurringInterval`, `recurringIntervalCount`,
+`trialInterval`, `trialIntervalCount`, `metadata`, `createdAt`, `modifiedAt`
+and `prices`, each with `id`, `amountType` (`fixed`, `custom`, `seat_based`,
+…), `priceCurrency`, `priceAmount` (cents, fixed prices only) and
+`isArchived`.
+
 Times are milliseconds since the epoch.
+
+## Migrating from `@convex-dev/polar`
+
+1. Replace the component in `convex.config.ts` and the client, and pass a
+   `referenceId` to every checkout (what `getUserInfo` returned as `userId`).
+2. Switch the webhook endpoint to format **Raw** and API version **2026-10**.
+   `@polar-sh/sdk` and any `whsec_` patch can go.
+3. Run `syncProducts` and `syncSubscriptions` once per deployment.
+4. Subscriptions bought before the switch have no `referenceId` in their
+   metadata, so they're found by the customer's external id, which the old
+   component never set. Set it in Polar (`PATCH /v1/customers/{id}` with
+   `external_id`, through `polar.request`), or add `referenceId` to the
+   subscription's metadata, then sync again.
 
 ## Testing
 
@@ -171,7 +215,7 @@ polarTest.register(t);
 ```
 
 `signWebhook(body, secret)` signs a delivery the way Polar does, to test your
-`onEvent` handler through `t.fetch("/polar/events", …)`.
+handlers through `t.fetch("/polar/events", …)`.
 
 ## Polar API versions
 

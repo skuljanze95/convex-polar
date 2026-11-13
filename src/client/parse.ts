@@ -1,5 +1,7 @@
 import type {
   Metadata,
+  Price,
+  Product,
   RecurringInterval,
   Subscription,
   SubscriptionStatus
@@ -21,6 +23,9 @@ const STATUSES: readonly SubscriptionStatus[] = [
 ];
 const INTERVALS: readonly RecurringInterval[] = ["day", "week", "month", "year"];
 
+/** The metadata key `createCheckout` keeps the reference id under. */
+export const REFERENCE_ID_KEY = "referenceId";
+
 /** Polar sent something this version of the package doesn't understand. */
 export class PolarParseError extends Error {
   override name = "PolarParseError";
@@ -30,10 +35,14 @@ export class PolarParseError extends Error {
 export function parseSubscription(value: unknown): Subscription {
   const data = object(value, "subscription");
   const customer = object(data.customer, "subscription.customer");
+  const externalCustomerId = nullable(customer, "external_id", string);
+  const meta = metadata(data.metadata);
+  const reference = meta[REFERENCE_ID_KEY];
   return {
     id: string(data, "id"),
+    referenceId: typeof reference === "string" && reference ? reference : externalCustomerId,
     customerId: string(data, "customer_id"),
-    externalCustomerId: nullable(customer, "external_id", string),
+    externalCustomerId,
     productId: string(data, "product_id"),
     status: oneOf(data, "status", STATUSES),
     amount: number(data, "amount"),
@@ -49,9 +58,42 @@ export function parseSubscription(value: unknown): Subscription {
     startedAt: nullable(data, "started_at", time),
     endsAt: nullable(data, "ends_at", time),
     endedAt: nullable(data, "ended_at", time),
-    metadata: metadata(data.metadata),
+    metadata: meta,
     createdAt: time(data, "created_at"),
     modifiedAt: nullable(data, "modified_at", time)
+  };
+}
+
+/** A Polar `Product` object, as the component mirrors it. */
+export function parseProduct(value: unknown): Product {
+  const data = object(value, "product");
+  const prices = data.prices;
+  if (!Array.isArray(prices)) throw new PolarParseError("Expected prices to be an array");
+  return {
+    id: string(data, "id"),
+    name: string(data, "name"),
+    description: nullable(data, "description", string),
+    isRecurring: boolean(data, "is_recurring"),
+    isArchived: boolean(data, "is_archived"),
+    recurringInterval: nullable(data, "recurring_interval", (d, k) => oneOf(d, k, INTERVALS)),
+    recurringIntervalCount: nullable(data, "recurring_interval_count", number),
+    trialInterval: nullable(data, "trial_interval", (d, k) => oneOf(d, k, INTERVALS)),
+    trialIntervalCount: nullable(data, "trial_interval_count", number),
+    metadata: metadata(data.metadata),
+    prices: prices.map(parsePrice),
+    createdAt: time(data, "created_at"),
+    modifiedAt: nullable(data, "modified_at", time)
+  };
+}
+
+function parsePrice(value: unknown): Price {
+  const data = object(value, "price");
+  return {
+    id: string(data, "id"),
+    amountType: string(data, "amount_type"),
+    priceCurrency: string(data, "price_currency"),
+    priceAmount: nullable(data, "price_amount", number),
+    isArchived: boolean(data, "is_archived")
   };
 }
 

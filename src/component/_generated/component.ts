@@ -23,6 +23,91 @@ import type { FunctionReference } from "convex/server";
  */
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
+    products: {
+      get: FunctionReference<
+        "query",
+        "internal",
+        { id: string },
+        {
+          createdAt: number;
+          description: string | null;
+          id: string;
+          isArchived: boolean;
+          isRecurring: boolean;
+          metadata: Record<string, string | number | boolean>;
+          modifiedAt: number | null;
+          name: string;
+          prices: Array<{
+            amountType: string;
+            id: string;
+            isArchived: boolean;
+            priceAmount: number | null;
+            priceCurrency: string;
+          }>;
+          recurringInterval: "day" | "week" | "month" | "year" | null;
+          recurringIntervalCount: number | null;
+          trialInterval: "day" | "week" | "month" | "year" | null;
+          trialIntervalCount: number | null;
+        } | null,
+        Name
+      >;
+      list: FunctionReference<
+        "query",
+        "internal",
+        { includeArchived?: boolean },
+        Array<{
+          createdAt: number;
+          description: string | null;
+          id: string;
+          isArchived: boolean;
+          isRecurring: boolean;
+          metadata: Record<string, string | number | boolean>;
+          modifiedAt: number | null;
+          name: string;
+          prices: Array<{
+            amountType: string;
+            id: string;
+            isArchived: boolean;
+            priceAmount: number | null;
+            priceCurrency: string;
+          }>;
+          recurringInterval: "day" | "week" | "month" | "year" | null;
+          recurringIntervalCount: number | null;
+          trialInterval: "day" | "week" | "month" | "year" | null;
+          trialIntervalCount: number | null;
+        }>,
+        Name
+      >;
+      upsert: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          products: Array<{
+            createdAt: number;
+            description: string | null;
+            id: string;
+            isArchived: boolean;
+            isRecurring: boolean;
+            metadata: Record<string, string | number | boolean>;
+            modifiedAt: number | null;
+            name: string;
+            prices: Array<{
+              amountType: string;
+              id: string;
+              isArchived: boolean;
+              priceAmount: number | null;
+              priceCurrency: string;
+            }>;
+            recurringInterval: "day" | "week" | "month" | "year" | null;
+            recurringIntervalCount: number | null;
+            trialInterval: "day" | "week" | "month" | "year" | null;
+            trialIntervalCount: number | null;
+          }>;
+        },
+        null,
+        Name
+      >;
+    };
     subscriptions: {
       get: FunctionReference<
         "query",
@@ -46,6 +131,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           productId: string;
           recurringInterval: "day" | "week" | "month" | "year";
           recurringIntervalCount: number;
+          referenceId: string | null;
           startedAt: number | null;
           status:
             | "incomplete"
@@ -61,10 +147,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         } | null,
         Name
       >;
-      listByExternalCustomer: FunctionReference<
+      listByReference: FunctionReference<
         "query",
         "internal",
-        { externalCustomerId: string },
+        { referenceId: string },
         Array<{
           amount: number;
           cancelAtPeriodEnd: boolean;
@@ -83,6 +169,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           productId: string;
           recurringInterval: "day" | "week" | "month" | "year";
           recurringIntervalCount: number;
+          referenceId: string | null;
           startedAt: number | null;
           status:
             | "incomplete"
@@ -102,7 +189,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
-          subscription: {
+          subscriptions: Array<{
             amount: number;
             cancelAtPeriodEnd: boolean;
             canceledAt: number | null;
@@ -120,6 +207,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             productId: string;
             recurringInterval: "day" | "week" | "month" | "year";
             recurringIntervalCount: number;
+            referenceId: string | null;
             startedAt: number | null;
             status:
               | "incomplete"
@@ -132,9 +220,9 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
               | "paused";
             trialEnd: number | null;
             trialStart: number | null;
-          };
+          }>;
         },
-        boolean,
+        null,
         Name
       >;
     };
@@ -145,6 +233,27 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           onEvent?: string;
           payload?: string;
+          product?: {
+            createdAt: number;
+            description: string | null;
+            id: string;
+            isArchived: boolean;
+            isRecurring: boolean;
+            metadata: Record<string, string | number | boolean>;
+            modifiedAt: number | null;
+            name: string;
+            prices: Array<{
+              amountType: string;
+              id: string;
+              isArchived: boolean;
+              priceAmount: number | null;
+              priceCurrency: string;
+            }>;
+            recurringInterval: "day" | "week" | "month" | "year" | null;
+            recurringIntervalCount: number | null;
+            trialInterval: "day" | "week" | "month" | "year" | null;
+            trialIntervalCount: number | null;
+          } | null;
           subscription: {
             amount: number;
             cancelAtPeriodEnd: boolean;
@@ -163,6 +272,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             productId: string;
             recurringInterval: "day" | "week" | "month" | "year";
             recurringIntervalCount: number;
+            referenceId: string | null;
             startedAt: number | null;
             status:
               | "incomplete"

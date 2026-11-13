@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel.js";
-import { type MutationCtx, mutation, query } from "./_generated/server.js";
+import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server.js";
 import { type Subscription, vSubscription } from "./validators.js";
 
-// A customer has a handful of subscriptions at most; this only bounds the read.
-const MAX_PER_CUSTOMER = 100;
+// A reference has a handful of subscriptions at most; this only bounds the read.
+const MAX_PER_REFERENCE = 100;
 
 function withoutSystemFields({ _id, _creationTime, ...subscription }: Doc<"subscriptions">): Subscription {
   return subscription;
@@ -14,51 +14,54 @@ function withoutSystemFields({ _id, _creationTime, ...subscription }: Doc<"subsc
 export const get = query({
   args: { id: v.string() },
   returns: v.union(vSubscription, v.null()),
-  handler: async (ctx, { id }) => {
-    const row = await ctx.db
-      .query("subscriptions")
-      .withIndex("by_polarId", (q) => q.eq("id", id))
-      .unique();
-    return row ? withoutSystemFields(row) : null;
-  }
+  handler: (ctx, { id }) => getSubscription(ctx, id)
 });
 
-/** A customer's subscriptions, by the customer's external id, newest first. */
-export const listByExternalCustomer = query({
-  args: { externalCustomerId: v.string() },
+/** A reference's subscriptions, newest first. */
+export const listByReference = query({
+  args: { referenceId: v.string() },
   returns: v.array(vSubscription),
-  handler: async (ctx, { externalCustomerId }) => {
+  handler: async (ctx, { referenceId }) => {
     const rows = await ctx.db
       .query("subscriptions")
-      .withIndex("by_externalCustomerId", (q) => q.eq("externalCustomerId", externalCustomerId))
+      .withIndex("by_referenceId", (q) => q.eq("referenceId", referenceId))
       .order("desc")
-      .take(MAX_PER_CUSTOMER);
+      .take(MAX_PER_REFERENCE);
     return rows.map(withoutSystemFields);
   }
 });
 
 /**
- * Mirrors a subscription Polar returned. Returns false when the mirror already
- * has a newer state of it (Polar delivers webhooks out of order), which it keeps.
+ * Mirrors subscriptions Polar returned. Each is kept unless the mirror already
+ * has a newer state of it (Polar delivers webhooks out of order).
  */
 export const upsert = mutation({
-  args: { subscription: vSubscription },
-  returns: v.boolean(),
-  handler: (ctx, { subscription }) => upsertSubscription(ctx, subscription)
+  args: { subscriptions: v.array(vSubscription) },
+  returns: v.null(),
+  handler: async (ctx, { subscriptions }) => {
+    for (const subscription of subscriptions) await upsertSubscription(ctx, subscription);
+    return null;
+  }
 });
 
-export async function upsertSubscription(ctx: MutationCtx, subscription: Subscription): Promise<boolean> {
+export async function getSubscription(ctx: QueryCtx, id: string): Promise<Subscription | null> {
+  const row = await ctx.db
+    .query("subscriptions")
+    .withIndex("by_polarId", (q) => q.eq("id", id))
+    .unique();
+  return row ? withoutSystemFields(row) : null;
+}
+
+export async function upsertSubscription(ctx: MutationCtx, subscription: Subscription): Promise<void> {
   const existing = await ctx.db
     .query("subscriptions")
     .withIndex("by_polarId", (q) => q.eq("id", subscription.id))
     .unique();
   if (!existing) {
     await ctx.db.insert("subscriptions", subscription);
-    return true;
+  } else if (changedAt(existing) <= changedAt(subscription)) {
+    await ctx.db.replace("subscriptions", existing._id, subscription);
   }
-  if (changedAt(existing) > changedAt(subscription)) return false;
-  await ctx.db.replace("subscriptions", existing._id, subscription);
-  return true;
 }
 
 function changedAt(subscription: Subscription): number {

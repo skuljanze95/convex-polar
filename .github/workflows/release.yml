@@ -30,7 +30,22 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION"
             exit 1
           fi
-      # prepublishOnly cleans, builds, tests and type-checks.
+      - name: Build, test and pack
+        run: |
+          pnpm clean && pnpm build && pnpm test
+          npm pack
+      # The tarball is attached first, so every release is installable from
+      # GitHub even when the npm publish below fails.
+      - name: Create GitHub release
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v heading="## $VERSION" '$0 == heading { found = 1; next } found && /^## / { exit } found' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          TARBALL="skuljanze-convex-polar-$VERSION.tgz"
+          printf '\nInstall from this release:\n\n```sh\npnpm add https://github.com/%s/releases/download/%s/%s\n```\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$TARBALL" >> "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" "$TARBALL" --title "convex-polar $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
       # Uses npm trusted publishing (configured on npmjs.com), else the NPM_TOKEN secret.
       # Skipped if the version is already on npm (a re-run, or a version published by hand).
       - name: Publish to npm
@@ -40,18 +55,7 @@ jobs:
           if curl -fsS -o /dev/null "https://registry.npmjs.org/$NAME/$VERSION"; then
             echo "$NAME@$VERSION is already on npm, skipping publish."
           else
-            npm publish --provenance --access public
+            npm publish --provenance --access public --ignore-scripts
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Create GitHub release
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk -v heading="## $VERSION" '$0 == heading { found = 1; next } found && /^## / { exit } found' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          if grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
-            gh release create "$GITHUB_REF_NAME" --title "convex-polar $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
-          else
-            gh release create "$GITHUB_REF_NAME" --title "convex-polar $VERSION" --generate-notes --verify-tag
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}

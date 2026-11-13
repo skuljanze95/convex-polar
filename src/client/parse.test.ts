@@ -1,10 +1,11 @@
 import { expect, test } from "vitest";
-import { polarSubscription } from "./fixtures.test.helpers.js";
-import { PolarParseError, parseSubscription } from "./parse.js";
+import { polarProduct, polarSubscription } from "./fixtures.test.helpers.js";
+import { PolarParseError, parseProduct, parseSubscription } from "./parse.js";
 
 test("reads a Polar subscription into the mirrored shape", () => {
   expect(parseSubscription(polarSubscription())).toEqual({
     id: "sub_1",
+    referenceId: "team_1",
     customerId: "cus_1",
     externalCustomerId: "team_1",
     productId: "prod_month",
@@ -28,9 +29,34 @@ test("reads a Polar subscription into the mirrored shape", () => {
   });
 });
 
-test("a customer without an external id is mirrored with null", () => {
-  const subscription = parseSubscription(polarSubscription({ customer: { id: "cus_1", external_id: null } }));
-  expect(subscription.externalCustomerId).toBeNull();
+test("the reference id is the checkout's, else the customer's external id", () => {
+  const forShop = parseSubscription(polarSubscription({ metadata: { referenceId: "shop_2" } }));
+  expect(forShop).toMatchObject({ referenceId: "shop_2", externalCustomerId: "team_1" });
+
+  const anonymous = parseSubscription(polarSubscription({ customer: { id: "cus_1", external_id: null } }));
+  expect(anonymous).toMatchObject({ referenceId: null, externalCustomerId: null });
+});
+
+test("reads a Polar product with its prices", () => {
+  expect(parseProduct(polarProduct())).toEqual({
+    id: "prod_month",
+    name: "Pro · Monthly",
+    description: null,
+    isRecurring: true,
+    isArchived: false,
+    recurringInterval: "month",
+    recurringIntervalCount: 1,
+    trialInterval: null,
+    trialIntervalCount: null,
+    metadata: { interval: "month" },
+    prices: [{ id: "price_1", amountType: "fixed", priceCurrency: "eur", priceAmount: 1000, isArchived: false }],
+    createdAt: Date.parse("2026-10-01T00:00:00.000Z"),
+    modifiedAt: null
+  });
+  const custom = parseProduct(
+    polarProduct({ prices: [{ id: "p", amount_type: "custom", price_currency: "usd", is_archived: false }] })
+  );
+  expect(custom.prices[0]).toMatchObject({ amountType: "custom", priceAmount: null });
 });
 
 test("leaves out metadata keys Convex can't store", () => {

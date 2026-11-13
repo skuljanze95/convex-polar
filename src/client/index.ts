@@ -8,20 +8,24 @@ import {
 } from "convex/server";
 import type { ObjectType } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
-import type { Metadata, RecurringInterval, Subscription, vWebhookEvent } from "../component/validators.js";
+import type { Metadata, Product, RecurringInterval, Subscription, vWebhookEvent } from "../component/validators.js";
 import { POLAR_API_VERSION, type PolarRequestInit, type PolarServer, polarRequest } from "./api.js";
-import { parseSubscription } from "./parse.js";
+import { parseProduct, parseSubscription, REFERENCE_ID_KEY } from "./parse.js";
 import { verifyWebhook, WebhookVerificationError } from "./webhook.js";
 
 export { POLAR_API_VERSION, PolarError, type PolarRequestInit, type PolarServer } from "./api.js";
-export { PolarParseError, parseSubscription } from "./parse.js";
+export { PolarParseError, parseProduct, parseSubscription, REFERENCE_ID_KEY } from "./parse.js";
 export { signWebhook, verifyWebhook, WebhookVerificationError } from "./webhook.js";
 export {
   type Metadata,
+  type Price,
+  type Product,
   type RecurringInterval,
   type Subscription,
   type SubscriptionStatus,
   vMetadata,
+  vPrice,
+  vProduct,
   vRecurringInterval,
   vSubscription,
   vSubscriptionStatus,
@@ -34,9 +38,9 @@ export {
  *
  * ```ts
  * new Polar(components.polar, {
- *   get accessToken() { return env.POLAR_ACCESS_TOKEN; },
- *   get webhookSecret() { return env.POLAR_WEBHOOK_SECRET; },
- *   get server() { return env.POLAR_SERVER; },
+ *   get accessToken() { return process.env.POLAR_ORGANIZATION_TOKEN; },
+ *   get webhookSecret() { return process.env.POLAR_WEBHOOK_SECRET; },
+ *   get server() { return process.env.POLAR_SERVER as PolarServer | undefined; },
  * });
  * ```
  */
@@ -56,11 +60,17 @@ export type CheckoutOptions = {
   /** The products offered, by Polar id; the first is selected. */
   products: string[];
   /**
-   * The app's own id for whoever pays. Polar keeps it as the customer's
-   * external id, creating the customer on the first checkout, and every
-   * subscription of that customer is mirrored under it.
+   * What the subscription is for, in the app's own terms: a user, a team, a
+   * shop. Kept in the subscription's metadata; `listSubscriptions` finds the
+   * subscription by it.
    */
-  externalCustomerId: string;
+  referenceId: string;
+  /**
+   * The app's id for the person who pays, kept as the Polar customer's
+   * external id when the checkout creates the customer. Polar matches
+   * customers by email first, so a returning customer keeps the one they had.
+   */
+  externalCustomerId?: string;
   customerEmail?: string;
   customerName?: string;
   /**
@@ -72,7 +82,9 @@ export type CheckoutOptions = {
   successUrl?: string;
   /** Where the checkout's back button goes. */
   returnUrl?: string;
-  /** Copied onto the order and the subscription. */
+  /** The origin of the page embedding the checkout, for Polar's embedded checkout. */
+  embedOrigin?: string;
+  /** Copied onto the order and the subscription, beside the reference id. */
   metadata?: Metadata;
   currency?: string;
   locale?: string;
@@ -88,11 +100,15 @@ export type ProrationBehavior = "invoice" | "prorate" | "next_period" | "reset";
 type QueryCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery">;
 type MutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
 
+// Polar's list pages; the largest page it serves.
+type Page = { items: unknown[]; pagination: { max_page: number } };
+const PAGE_SIZE = 100;
+
 /**
  * Polar subscriptions for a Convex app: checkout, the customer portal, plan
- * changes, and a mirror of every subscription that webhooks keep current.
- * Calls Polar's REST API directly, pinned to POLAR_API_VERSION, so it runs in
- * Convex's default runtime.
+ * changes, and a mirror of subscriptions and products that webhooks keep
+ * current. Calls Polar's REST API directly, pinned to POLAR_API_VERSION, so
+ * it runs in Convex's default runtime.
  */
 export class Polar {
   constructor(
@@ -130,7 +146,8 @@ export class Polar {
         customer_ip_address: options.customerIpAddress,
         success_url: options.successUrl,
         return_url: options.returnUrl,
-        metadata: options.metadata,
+        embed_origin: options.embedOrigin,
+        metadata: { ...options.metadata, [REFERENCE_ID_KEY]: options.referenceId },
         currency: options.currency,
         locale: options.locale,
         allow_discount_codes: options.allowDiscountCodes,
@@ -142,13 +159,19 @@ export class Polar {
   }
 
   /**
-   * A link to Polar's customer portal (payment method, invoices, cancelling)
-   * for a customer who has bought before. It works once and expires soon, so
-   * make one per visit.
+   * A link to Polar's customer portal (payment method, invoices, cancelling).
+   * Pass the Polar `customerId` of a mirrored subscription, or the customer's
+   * external id. The link works once and expires soon, so make one per visit.
    */
-  async createCustomerPortalUrl(options: { externalCustomerId: string; returnUrl?: string }): Promise<string> {
+  async createCustomerPortalUrl(
+    options: ({ customerId: string } | { externalCustomerId: string }) & { returnUrl?: string }
+  ): Promise<string> {
+    const customer =
+      "customerId" in options
+        ? { customer_id: options.customerId }
+        : { external_customer_id: options.externalCustomerId };
     const session = await this.request<{ customer_portal_url: string }>("POST", "/v1/customer-sessions/", {
-      body: { external_customer_id: options.externalCustomerId, return_url: options.returnUrl }
+      body: { ...customer, return_url: options.returnUrl }
     });
     return session.customer_portal_url;
   }
@@ -158,7 +181,7 @@ export class Polar {
     ctx: MutationCtx,
     options: { subscriptionId: string; productId: string; prorationBehavior?: ProrationBehavior }
   ): Promise<Subscription> {
-    return await this.updateSubscription(ctx, options.subscriptionId, {
+    return await this.updateSubscription(ctx, options.subscriptionId, "PATCH", {
       product_id: options.productId,
       proration_behavior: options.prorationBehavior
     });
@@ -169,14 +192,19 @@ export class Polar {
     ctx: MutationCtx,
     options: { subscriptionId: string; cancelAtPeriodEnd: boolean }
   ): Promise<Subscription> {
-    return await this.updateSubscription(ctx, options.subscriptionId, {
+    return await this.updateSubscription(ctx, options.subscriptionId, "PATCH", {
       cancel_at_period_end: options.cancelAtPeriodEnd
     });
   }
 
-  /** A customer's mirrored subscriptions, by external id, newest first. */
-  async listSubscriptions(ctx: QueryCtx, options: { externalCustomerId: string }): Promise<Subscription[]> {
-    return await ctx.runQuery(this.component.subscriptions.listByExternalCustomer, options);
+  /** Ends a subscription now, without waiting for the period to end. */
+  async revokeSubscription(ctx: MutationCtx, options: { subscriptionId: string }): Promise<Subscription> {
+    return await this.updateSubscription(ctx, options.subscriptionId, "DELETE");
+  }
+
+  /** A reference's mirrored subscriptions, newest first. */
+  async listSubscriptions(ctx: QueryCtx, options: { referenceId: string }): Promise<Subscription[]> {
+    return await ctx.runQuery(this.component.subscriptions.listByReference, options);
   }
 
   /** A mirrored subscription by its Polar id. */
@@ -184,11 +212,49 @@ export class Polar {
     return await ctx.runQuery(this.component.subscriptions.get, options);
   }
 
+  /** The mirrored products, archived ones only when asked for. */
+  async listProducts(ctx: QueryCtx, options: { includeArchived?: boolean } = {}): Promise<Product[]> {
+    return await ctx.runQuery(this.component.products.list, options);
+  }
+
+  /** A mirrored product by its Polar id. */
+  async getProduct(ctx: QueryCtx, options: { id: string }): Promise<Product | null> {
+    return await ctx.runQuery(this.component.products.get, options);
+  }
+
+  /**
+   * Copies every product of the organization from Polar into the mirror. Run
+   * it once after installing (webhooks keep it current after that) and after
+   * changing products outside the webhook's events. From an action.
+   */
+  async syncProducts(ctx: MutationCtx): Promise<number> {
+    let count = 0;
+    for await (const items of this.pages("/v1/products/")) {
+      await ctx.runMutation(this.component.products.upsert, { products: items.map(parseProduct) });
+      count += items.length;
+    }
+    return count;
+  }
+
+  /**
+   * Copies the organization's subscriptions from Polar into the mirror, for
+   * the ones that started before the webhook was set up. From an action.
+   */
+  async syncSubscriptions(ctx: MutationCtx): Promise<number> {
+    let count = 0;
+    for await (const items of this.pages("/v1/subscriptions/")) {
+      await ctx.runMutation(this.component.subscriptions.upsert, { subscriptions: items.map(parseSubscription) });
+      count += items.length;
+    }
+    return count;
+  }
+
   /**
    * Mounts Polar's webhook at `path` (default "/polar/events"): checks the
-   * signature with `webhookSecret`, mirrors the subscription events, and runs
-   * `onEvent` for every event once, in the same transaction. Point the Polar
-   * endpoint at `<CONVEX_SITE_URL><path>`, with the API version POLAR_API_VERSION.
+   * signature with `webhookSecret`, mirrors the subscription and product
+   * events, and runs `onEvent` for every event once, in the same transaction.
+   * Point the Polar endpoint at `<CONVEX_SITE_URL><path>`, with the API
+   * version POLAR_API_VERSION.
    */
   registerRoutes(
     http: HttpRouter,
@@ -227,13 +293,15 @@ export class Polar {
               `but this package reads ${POLAR_API_VERSION}. Set the endpoint's version in Polar's dashboard.`
           );
         }
-        // A subscription the parser can't read throws: the delivery fails
-        // loudly and Polar retries it, rather than the mirror going stale.
+        // Data the parser can't read throws: the delivery fails loudly and
+        // Polar retries it, rather than the mirror going stale.
         const subscription = event.type.startsWith("subscription.") ? parseSubscription(event.data) : null;
+        const product = event.type.startsWith("product.") ? parseProduct(event.data) : null;
         await ctx.runMutation(this.component.webhooks.ingest, {
           webhookId: request.headers.get("webhook-id") ?? "",
           type: event.type,
           subscription,
+          product,
           ...(options.onEvent ? { payload: body, onEvent: await createFunctionHandle(options.onEvent) } : {})
         });
         return new Response(null, { status: 202 });
@@ -241,12 +309,25 @@ export class Polar {
     });
   }
 
-  private async updateSubscription(ctx: MutationCtx, id: string, body: object): Promise<Subscription> {
+  private async updateSubscription(
+    ctx: MutationCtx,
+    id: string,
+    method: "PATCH" | "DELETE",
+    body?: object
+  ): Promise<Subscription> {
     const updated = parseSubscription(
-      await this.request("PATCH", `/v1/subscriptions/${encodeURIComponent(id)}`, { body })
+      await this.request(method, `/v1/subscriptions/${encodeURIComponent(id)}`, body ? { body } : {})
     );
     // Mirrored now, so the app sees the change before the webhook arrives.
-    await ctx.runMutation(this.component.subscriptions.upsert, { subscription: updated });
+    await ctx.runMutation(this.component.subscriptions.upsert, { subscriptions: [updated] });
     return updated;
+  }
+
+  private async *pages(path: string): AsyncGenerator<unknown[]> {
+    for (let page = 1; ; page += 1) {
+      const result = await this.request<Page>("GET", path, { query: { page, limit: PAGE_SIZE } });
+      yield result.items;
+      if (page >= result.pagination.max_page) return;
+    }
   }
 }

@@ -24,11 +24,17 @@ export type Metadata = Infer<typeof vMetadata>;
 
 /**
  * A Polar subscription as the component mirrors it. Times are milliseconds
- * since the epoch. `externalCustomerId` is the customer's external id: the
- * app's own id for whoever pays (a user, a team, a business).
+ * since the epoch.
+ *
+ * `referenceId` is what the subscription is for, in the app's own terms (a
+ * user, a team, a shop): the `referenceId` given to `createCheckout`, kept in
+ * the subscription's metadata, else the customer's external id. Look
+ * subscriptions up by it. Polar keeps one customer per email, so one person
+ * can pay for several references.
  */
 export const vSubscription = v.object({
   id: v.string(),
+  referenceId: v.union(v.string(), v.null()),
   customerId: v.string(),
   externalCustomerId: v.union(v.string(), v.null()),
   productId: v.string(),
@@ -55,6 +61,38 @@ export const vSubscription = v.object({
 });
 export type Subscription = Infer<typeof vSubscription>;
 
+/**
+ * A price of a product. `amountType` is Polar's: "fixed", "custom",
+ * "seat_based", "metered_unit", ...; `priceAmount` (in cents) is set for
+ * fixed prices only.
+ */
+export const vPrice = v.object({
+  id: v.string(),
+  amountType: v.string(),
+  priceCurrency: v.string(),
+  priceAmount: v.union(v.number(), v.null()),
+  isArchived: v.boolean()
+});
+export type Price = Infer<typeof vPrice>;
+
+/** A Polar product as the component mirrors it. */
+export const vProduct = v.object({
+  id: v.string(),
+  name: v.string(),
+  description: v.union(v.string(), v.null()),
+  isRecurring: v.boolean(),
+  isArchived: v.boolean(),
+  recurringInterval: v.union(vRecurringInterval, v.null()),
+  recurringIntervalCount: v.union(v.number(), v.null()),
+  trialInterval: v.union(vRecurringInterval, v.null()),
+  trialIntervalCount: v.union(v.number(), v.null()),
+  metadata: vMetadata,
+  prices: v.array(vPrice),
+  createdAt: v.number(),
+  modifiedAt: v.union(v.number(), v.null())
+});
+export type Product = Infer<typeof vProduct>;
+
 /** What the app's `onEvent` mutation receives for every webhook event. */
 export const vWebhookEvent = {
   /** Polar's event type, e.g. "subscription.updated" or "order.paid". */
@@ -62,5 +100,7 @@ export const vWebhookEvent = {
   /** The event as Polar sent it (JSON), for the fields the mirror doesn't keep. */
   payload: v.string(),
   /** The subscription it carries, as now mirrored; null for other events. */
-  subscription: v.union(vSubscription, v.null())
+  subscription: v.union(vSubscription, v.null()),
+  /** The product it carries, as now mirrored; null for other events. */
+  product: v.union(vProduct, v.null())
 };

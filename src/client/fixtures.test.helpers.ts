@@ -40,6 +40,43 @@ export function polarSubscription(overrides: Record<string, unknown> = {}): Reco
   };
 }
 
+// A Polar `Product` (API version 2026-10), trimmed the same way.
+export function polarProduct(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "prod_month",
+    created_at: "2026-10-01T00:00:00.000Z",
+    modified_at: null,
+    trial_interval: null,
+    trial_interval_count: null,
+    name: "Pro · Monthly",
+    description: null,
+    visibility: "public",
+    recurring_interval: "month",
+    recurring_interval_count: 1,
+    is_recurring: true,
+    is_archived: false,
+    organization_id: "org_1",
+    metadata: { interval: "month" },
+    prices: [
+      {
+        id: "price_1",
+        created_at: "2026-10-01T00:00:00.000Z",
+        modified_at: null,
+        source: "catalog",
+        amount_type: "fixed",
+        price_currency: "eur",
+        tax_behavior: null,
+        is_archived: false,
+        product_id: "prod_month",
+        price_amount: 1000
+      }
+    ],
+    benefits: [],
+    medias: [],
+    ...overrides
+  };
+}
+
 export function webhookBody(type: string, data: unknown): string {
   return JSON.stringify({ type, timestamp: new Date().toISOString(), api_version: "2026-10", data });
 }

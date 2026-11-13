@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as products from "../products.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as validators from "../validators.js";
 import type * as webhooks from "../webhooks.js";
@@ -20,6 +21,7 @@ import type {
 import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
+  products: typeof products;
   subscriptions: typeof subscriptions;
   validators: typeof validators;
   webhooks: typeof webhooks;
